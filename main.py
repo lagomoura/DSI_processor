@@ -11,11 +11,17 @@ import time
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 import threading
+import sys
+
+if getattr(sys, "frozen", False):
+  base_directory = os.path.dirname(sys.executable)
+else:
+  base_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Define el directorio a observar
-WATCH_DIRECTORY = "temp/input_pdf"
-SIGNATURE_IMAGE = "temp/signature/firma.JPG"
-OUTPUT_FOLDER = "temp/output_pdf"
+WATCH_DIRECTORY = os.path.join(base_directory, "input_pdf")
+SIGNATURE_IMAGE = os.path.join(base_directory, "signature", "firma.JPEG")
+OUTPUT_FOLDER = os.path.join(base_directory, "output_pdf")
 
 
 def extract_cuit_pdf(page):
