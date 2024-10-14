@@ -11,20 +11,20 @@ import time
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 import threading
-import sys
+import shutil
 
-if getattr(sys, "frozen", False):
-  base_directory = os.path.dirname(sys.executable)
+
+if os.path.exists("\\\192.168.0.20\\clientes"):
+  base_directory = "\\\192.168.0.20\\clientes"
 else:
   base_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Define el directorio a observar
 WATCH_DIRECTORY = os.path.join(base_directory, "input_pdf")
 SIGNATURE_IMAGE = os.path.join(base_directory, "signature", "firma.JPEG")
-OUTPUT_FOLDER = os.path.join(base_directory, "output_pdf")
-
 
 def extract_cuit_pdf(page):
+  
   # Leer el PDF
   text = page.extract_text()
   match = re.search(r"CUIT\s*-\s*(\d{2,3}\s*\d{3,4}\s*\d{3,4})", text)
@@ -36,9 +36,9 @@ def extract_cuit_pdf(page):
   
   else:
     return None
-    
+  
 
-def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
+def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
   reader = PdfReader(pdf_file_path)
 
@@ -47,13 +47,11 @@ def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
   
   # Obteniendo nombre del archivo pdf original (numero particular)
   pdf_file_name = os.path.basename(pdf_file_path)
-  base_name, _ = os.path.splitext(pdf_file_name)
   
   for page_num in range(len(reader.pages)):
     
     # Elimina una pagina del PDF original
     page = reader.pages[page_num]
-    
     cuit_code = extract_cuit_pdf(page)
   
     if cuit_code is None:
@@ -61,13 +59,24 @@ def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
       log_output.see(tk.END)
       continue
 
-    procesed_folder = os.path.join(output_folder, f"{cuit_code}")
+    z_directory = "\\\\192.168.0.20\\clientes"
+    cuit_folder = os.path.join(z_directory, cuit_code)
   
-    if not os.path.exists(procesed_folder):
-      os.makedirs(procesed_folder)
+    if not os.path.exists(cuit_folder):
+      os.makedirs(cuit_folder)
+      log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
+    else:
+      log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
+      
+    dsi_folder = os.path.join(cuit_folder, "DSI")
+    if not os.path.exists(dsi_folder):
+      os.makedirs(dsi_folder)
+      log_output.insert(tk.END, f"Creando subcarpeta DSI en {dsi_folder}\n")
+      
+    time_stamp = time.strftime("%Y%m%d_%H%M%S")
+    output_pdf_path = os.path.join(dsi_folder, f"{time_stamp}.pdf")
 
-    # Se crea un archivo temporal para cada pagina
-    output_pdf_path = f"{procesed_folder}/{base_name}.pdf"
+    #Crea el archivo PDF con la firma en cada pagina
     writer = PdfWriter()
 
     # Crea un archivo en blanco con las mismas configuraciones de la pagina original
@@ -79,8 +88,8 @@ def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
     img_width, img_height = img.size
 
     # Calculando x e y para centrar la firma
-    x = (page_width - img_width) / 2
-    y = (page_height - img_height) / 2
+    x = (page_width - img_width) / 3.5
+    y = (page_height - img_height) / 3.5
 
     # Dibujando la firma en el centro de la pagina
     can.drawImage(image_path, x, y, width=img_width, height=img_height)
@@ -94,9 +103,6 @@ def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
     page.merge_page(new_pdf.pages[0])
     writer.add_page(page)
     
-    log_output.insert(tk.END, f"Generando nueva DSI. Separando en páginas\n")
-    log_output.see(tk.END)
-
     with open(output_pdf_path, "wb") as output_pdf:
         writer.write(output_pdf)
     
@@ -105,7 +111,24 @@ def split_pdf_add_img(pdf_file_path, image_path, output_folder, log_output):
     
   log_output.insert(tk.END, f"Procesamiento finalizado\n")
   log_output.see(tk.END)
+  
+  mover_pdf_a_procesados(pdf_file_path, log_output)
 
+def mover_pdf_a_procesados(pdf_file_path, log_output):
+  
+  root_directory = os.path.dirname(os.path.dirname(pdf_file_path))
+  processed_folder = os.path.join(root_directory, "PROCESADOS")
+  
+  if not os.path.exists(processed_folder):
+    os.makedirs(processed_folder)
+    log_output.insert(tk.END, f"Creando carpeta de procesados: {processed_folder}\n")
+    log_output.insert(tk.END, f"Carpeta creada con suceso!\n")
+    
+  destino_pdf = os.path.join(processed_folder, os.path.basename(pdf_file_path))
+  shutil.move(pdf_file_path, destino_pdf)
+  log_output.insert(tk.END, f"Archivo original movido desde carpeta input_pdf a carpeta PROCESADOS\n")
+  log_output.insert(tk.END, f"Rutina de procesamiento finalizada!\n")
+  
 class PDFHandler(FileSystemEventHandler):
   def __init__(self, log_output):
     self.log_output = log_output
@@ -117,7 +140,7 @@ class PDFHandler(FileSystemEventHandler):
     if event.src_path.endswith(".pdf"):
       self.log_output.insert(tk.END, f"Nuevo archivo PDF detectado: {event.src_path}\n")
       self.log_output.see(tk.END)
-      split_pdf_add_img(event.src_path, SIGNATURE_IMAGE, OUTPUT_FOLDER, self.log_output)
+      split_pdf_add_img(event.src_path, SIGNATURE_IMAGE, self.log_output)
 
 def start_observer(log_output):     
   event_handler = PDFHandler(log_output)
