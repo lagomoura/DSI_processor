@@ -12,16 +12,22 @@ import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 import threading
 import shutil
+import sys
 
-
-if os.path.exists("\\\192.168.0.20\\clientes"):
-  base_directory = "\\\192.168.0.20\\clientes"
+if getattr(sys, 'frozen', False):
+    # El archivo está empaquetado con PyInstaller
+    base_directory = os.path.dirname(sys.executable)
 else:
-  base_directory = os.path.dirname(os.path.abspath(__file__))
+    # El archivo se está ejecutando directamente desde el script
+    base_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Define el directorio a observar
 WATCH_DIRECTORY = os.path.join(base_directory, "input_pdf")
 SIGNATURE_IMAGE = os.path.join(base_directory, "signature", "firma.JPEG")
+
+if not os.path.exists(WATCH_DIRECTORY):
+    print(f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.")
+  # Finaliza el programa si la carpeta no existe
 
 def extract_cuit_pdf(page):
   
@@ -142,15 +148,26 @@ class PDFHandler(FileSystemEventHandler):
       self.log_output.see(tk.END)
       split_pdf_add_img(event.src_path, SIGNATURE_IMAGE, self.log_output)
 
-def start_observer(log_output):     
+def start_observer(log_output):
+  
+  if not os.path.exists(WATCH_DIRECTORY):
+        log_output.insert(tk.END, f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.\n")
+        log_output.see(tk.END)
+        return
+      
   event_handler = PDFHandler(log_output)
   observer = Observer()
   observer.schedule(event_handler, WATCH_DIRECTORY, recursive=False)
   
-  log_output.insert(tk.END, f"Bienvenido al procesador de DSI. Agregar archivo PDF a la carpeta de procesamiento\n")
+  log_output.insert(tk.END, f"Bienvenido al procesador de DSI. Agregar archivo PDF a la carpeta input_pdf\n")
   log_output.see(tk.END)
 
-  observer.start()
+  try:
+    observer.start()
+  except Exception as e:
+    log_output.insert(tk.END, f"Error al iniciar el observador: {e}\n")
+    log_output.see(tk.END)
+    return
   
   try:
     while True:
