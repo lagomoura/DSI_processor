@@ -80,7 +80,7 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             current_writer = PdfWriter()
 
             # Carpeta de salida para este CUIT
-            z_directory = "\\\\192.168.0.20\\clientes\\test"
+            z_directory = "\\\\192.168.0.20\\clientes"
             cuit_folder = os.path.join(z_directory, cuit_code)
 
             if not os.path.exists(cuit_folder):
