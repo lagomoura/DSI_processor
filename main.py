@@ -26,13 +26,12 @@ WATCH_DIRECTORY = os.path.join(base_directory, "input_pdf")
 SIGNATURE_IMAGE = os.path.join(base_directory, "signature", "firma.JPEG")
 
 if not os.path.exists(WATCH_DIRECTORY):
-    print(f"Error: El directorio {
-          WATCH_DIRECTORY} no existe o no es accesible.")
-  # Finaliza el programa si la carpeta no existe
+    print(f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.")
+# Finaliza el programa si la carpeta no existe
 
 
 def extract_cuit_pdf(page):
-  # Leer el PDF
+    # Leer el PDF
     text = page.extract_text()
     match = re.search(r"CUIT\s*-\s*(\d{2,3}\s*\d{3,4}\s*\d{3,4})", text)
 
@@ -47,74 +46,71 @@ def extract_cuit_pdf(page):
 
 def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
-  try:
-    time.sleep(1)
-    reader = PdfReader(pdf_file_path)
+    try:
+        time.sleep(1)
+        reader = PdfReader(pdf_file_path)
 
-    # Leer la firma
-    img = Image.open(image_path)
+        # Leer la firma
+        img = Image.open(image_path)
 
-    # Obteniendo nombre del archivo pdf original (numero particular)
-    pdf_file_name = os.path.basename(pdf_file_path)
+        # Obteniendo nombre del archivo pdf original (numero particular)
+        pdf_file_name = os.path.basename(pdf_file_path)
 
-    # Variables para el proceso de agrupacion de paginas por CUIT
-    current_cuit_code = None
-    current_writer = None
-    current_output_folder = None
-    pages_buffer = []
+        # Variables para el proceso de agrupacion de paginas por CUIT
+        current_cuit_code = None
+        current_writer = None
+        current_output_folder = None
+        pages_buffer = []
 
-    for page_num, page in enumerate(reader.pages):
+        # Ignorando la ultima hoja (resumen de DSI)
+        total_pages = len(reader.pages) - 1
+        for page_num in range(total_pages):
 
-        cuit_code = extract_cuit_pdf(page)
+            page = reader.pages[page_num]
+            cuit_code = extract_cuit_pdf(page)
 
-    # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
-        if cuit_code is not None:
-            if current_writer is not None and current_cuit_code is not None:
-                # Agregar la firma a la última página del bloque antes de guardar
-                pages_buffer[-1] = add_signature_to_page(
-                    pages_buffer[-1], image_path, img)
-                save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
-                pages_buffer = []
+        # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
+            if cuit_code is not None:
+                if current_writer is not None and current_cuit_code is not None:
+                    # Agregar la firma a la última página del bloque antes de guardar
+                    pages_buffer[-1] = add_signature_to_page(
+                        pages_buffer[-1], image_path, img)
+                    save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
+                    pages_buffer = []
 
-            current_cuit_code = cuit_code
-            current_writer = PdfWriter()
+                current_cuit_code = cuit_code
+                current_writer = PdfWriter()
 
-            # Carpeta de salida para este CUIT
-            z_directory = "\\\\192.168.0.20\\clientes"
-            cuit_folder = os.path.join(z_directory, cuit_code)
+                # Carpeta de salida para este CUIT
+                z_directory = "\\\\10.55.55.9\\particulares"
+                cuit_folder = os.path.join(z_directory, cuit_code)
 
-            if not os.path.exists(cuit_folder):
-                os.makedirs(cuit_folder)
-                log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
-            else:
-                log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
+                if not os.path.exists(cuit_folder):
+                    os.makedirs(cuit_folder)
+                    log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
+                else:
+                    log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
 
-            dsi_folder = os.path.join(cuit_folder, "DSI")
-            if not os.path.exists(dsi_folder):
-                os.makedirs(dsi_folder)
-                log_output.insert(
-                    tk.END, f"Creando subcarpeta DSI en {dsi_folder}\n")
+                current_output_folder = cuit_folder
 
-            current_output_folder = dsi_folder
+            pages_buffer.append(page)
 
-        pages_buffer.append(page)
+        # Guardar el último bloque al finalizar el bucle
+        if current_writer is not None and current_cuit_code is not None:
+            # Agregar la firma a la última página del bloque antes de guardar
+            pages_buffer[-1] = add_signature_to_page(
+                pages_buffer[-1], image_path, img)
+            save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
 
-    # Guardar el último bloque al finalizar el bucle
-    if current_writer is not None and current_cuit_code is not None:
-        # Agregar la firma a la última página del bloque antes de guardar
-        pages_buffer[-1] = add_signature_to_page(
-            pages_buffer[-1], image_path, img)
-        save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
+        log_output.insert(tk.END, f"Procesamiento finalizado\n")
+        log_output.see(tk.END)
+        mover_pdf_a_procesados(pdf_file_path, log_output)
 
-    log_output.insert(tk.END, f"Procesamiento finalizado\n")
-    log_output.see(tk.END)
-    mover_pdf_a_procesados(pdf_file_path, log_output)
-    
-  except PermissionError as e:
-    log_output.insert(tk.END, f"Error: No se pudo acceder al archivo {pdf_file_path} debido a permisos. {e}\n")
-    log_output.see(tk.END)
-    time.sleep(2)  # Espera antes de intentar de nuevo
-    split_pdf_add_img(pdf_file_path, image_path, log_output)  # Intentar nuevamente
+    except PermissionError as e:
+        log_output.insert(tk.END, f"Error: No se pudo acceder al archivo {pdf_file_path} debido a permisos. {e}\n")
+        log_output.see(tk.END)
+        time.sleep(2)  # Espera antes de intentar de nuevo
+        split_pdf_add_img(pdf_file_path, image_path, log_output)  # Intentar nuevamente
 
 
 def add_signature_to_page(page, image_path, img):
