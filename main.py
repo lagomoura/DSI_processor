@@ -13,6 +13,7 @@ from tkinter.scrolledtext import ScrolledText
 import threading
 import shutil
 import sys
+from pathlib import Path
 
 if getattr(sys, 'frozen', False):
     # El archivo está empaquetado con PyInstaller
@@ -29,20 +30,33 @@ if not os.path.exists(WATCH_DIRECTORY):
     print(f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.")
 # Finaliza el programa si la carpeta no existe
 
+def extract_text_from_all_pages(pdf_file_path):
+    reader = PdfReader(pdf_file_path)
+    all_text = [page.extract_text() for page in reader.pages]
+    return all_text
 
 def extract_cuit_pdf(page):
     # Leer el PDF
     text = page.extract_text()
-    match = re.search(r"CUIT\s*-\s*(\d{2,3}\s*\d{3,4}\s*\d{3,4})", text)
+    match = re.search(r'CUIT\s*-\s*(\d+\s*\d*)', text)
 
     if match:
         cuit = match.group(1)
         cuit_clean = cuit.replace(" ", "")
+
         return f"{cuit_clean}"
 
     else:
         return None
 
+def read_nro_guia(all_text, page_number):
+    text = all_text[page_number].split("\n")
+    if text:
+        doc_transp = text[10].split()[0]
+        return doc_transp
+    else:
+        print("Error leyendo doc_transpot", text)
+        return None
 
 def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
@@ -53,54 +67,56 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
         # Leer la firma
         img = Image.open(image_path)
 
-        # Obteniendo nombre del archivo pdf original (numero particular)
-        pdf_file_name = os.path.basename(pdf_file_path)
-
         # Variables para el proceso de agrupacion de paginas por CUIT
         current_cuit_code = None
         current_writer = None
         current_output_folder = None
         pages_buffer = []
-
+        start_page_num = 0
+        
+        all_text = extract_text_from_all_pages(pdf_file_path)
+        
         # Ignorando la ultima hoja (resumen de DSI)
         total_pages = len(reader.pages) - 1
+        
         for page_num in range(total_pages):
 
             page = reader.pages[page_num]
             cuit_code = extract_cuit_pdf(page)
+            
+            if cuit_code is None:
+                log_output.insert(tk.END, f"Error: No se pudo leer el CUIT de la página {page_num + 1}\n")
+                log_output.see(tk.END)
+                continue
 
         # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
-            if cuit_code is not None:
-                if current_writer is not None and current_cuit_code is not None:
-                    # Agregar la firma a la última página del bloque antes de guardar
-                    pages_buffer[-1] = add_signature_to_page(
-                        pages_buffer[-1], image_path, img)
-                    save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
-                    pages_buffer = []
+            if current_cuit_code is not None and cuit_code != current_cuit_code:
+                # Agregar la firma a la última página del bloque antes de guardar
+                pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
+                save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output, all_text, start_page_num)
+                pages_buffer = []
+                start_page_num = page_num
 
-                current_cuit_code = cuit_code
-                current_writer = PdfWriter()
+                
+            # Carpeta de salida para este CUIT
+            p_directory = "\\\\10.55.55.9\\particulares"
+            cuit_folder = os.path.join(p_directory, cuit_code)
+            
+            if not os.path.exists(cuit_folder):
+                os.makedirs(cuit_folder, exist_ok=True)
+                log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
+            else:
+                log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
 
-                # Carpeta de salida para este CUIT
-                z_directory = "\\\\10.55.55.9\\particulares"
-                cuit_folder = os.path.join(z_directory, cuit_code)
-
-                if not os.path.exists(cuit_folder):
-                    os.makedirs(cuit_folder)
-                    log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
-                else:
-                    log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
-
-                current_output_folder = cuit_folder
-
+            current_cuit_code = cuit_code
+            current_output_folder = os.path.join(p_directory, current_cuit_code)
+            os.makedirs(current_output_folder, exist_ok=True)
+            
             pages_buffer.append(page)
 
         # Guardar el último bloque al finalizar el bucle
-        if current_writer is not None and current_cuit_code is not None:
-            # Agregar la firma a la última página del bloque antes de guardar
-            pages_buffer[-1] = add_signature_to_page(
-                pages_buffer[-1], image_path, img)
-            save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output)
+        if pages_buffer:
+            save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output, all_text, total_pages - len(pages_buffer))
 
         log_output.insert(tk.END, f"Procesamiento finalizado\n")
         log_output.see(tk.END)
@@ -138,24 +154,37 @@ def add_signature_to_page(page, image_path, img):
     return page
 
 
-def save_pdf_block(writer, pages_buffer, output_folder, log_output):
+def save_pdf_block(writer, pages_buffer, output_folder, log_output, all_text, start_page_num):    
 
-    # Guardar el bloque de páginas con el CUIT actual
-    time_stamp = time.strftime("%Y%m%d_%H%M%S")
-    output_pdf_path = os.path.join(output_folder, f"{time_stamp}.pdf")
+    for page_num, page in enumerate(pages_buffer):
+        writer = PdfWriter()
+        page_index = start_page_num + page_num
+        
+        # Guardar el bloque de páginas con el CUIT actual
+        nombre_archivo = read_nro_guia(all_text, page_index)
+        if not nombre_archivo:
+            nombre_archivo = f"Pagina_{page_index + 1}"
+        output_pdf_path = os.path.join(output_folder, f"{nombre_archivo}.pdf")
+        
+        # Verificar que la ruta del archivo sea válida
+        if not os.path.isdir(output_folder):
+            log_output.insert(tk.END, f"Error: El directorio de salida no existe: {output_folder}\n")
+            log_output.see(tk.END)
+            return
+        
+        try:
+            writer.add_page(page)
 
-    for page in pages_buffer:
-        writer.add_page(page)
+            with open(output_pdf_path, "wb") as output_pdf:
+                writer.write(output_pdf)
 
-        with open(output_pdf_path, "wb") as output_pdf:
-            writer.write(output_pdf)
-
-        log_output.insert(tk.END, f"Páginas procesada y guardadas en {output_pdf_path}\n")
-        log_output.see(tk.END)
+            log_output.insert(tk.END, f"Páginas procesada y guardadas en {output_pdf_path}\n")
+        except OSError as e:
+            log_output.insert(tk.END, f"Error al guardar el archivo {output_pdf_path}: {e}\n")    
+            log_output.see(tk.END)
 
 
 def mover_pdf_a_procesados(pdf_file_path, log_output):
-    # Crear carpeta PROCESADOS dentro de \\192.168.0.20\clientes
 
     processed_folder = os.path.join(base_directory, "PROCESADOS")
 
