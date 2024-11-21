@@ -45,7 +45,6 @@ def extract_cuit_pdf(page):
         cuit_clean = cuit.replace(" ", "")
 
         return f"{cuit_clean}"
-
     else:
         return None
 
@@ -59,7 +58,6 @@ def read_nro_guia(all_text, page_number):
         return None
 
 def split_pdf_add_img(pdf_file_path, image_path, log_output):
-
     try:
         time.sleep(1)
         reader = PdfReader(pdf_file_path)
@@ -69,10 +67,9 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
         # Variables para el proceso de agrupacion de paginas por CUIT
         current_cuit_code = None
-        current_writer = None
-        current_output_folder = None
         pages_buffer = []
         start_page_num = 0
+        nro_guia = None
         
         all_text = extract_text_from_all_pages(pdf_file_path)
         
@@ -80,10 +77,13 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
         total_pages = len(reader.pages) - 1
         
         for page_num in range(total_pages):
-
             page = reader.pages[page_num]
             cuit_code = extract_cuit_pdf(page)
             
+            # Si no se encuentra CUIT, se asume que pertenece al CUIT anterior
+            if cuit_code is None and current_cuit_code is not None:
+                cuit_code = current_cuit_code
+                
             if cuit_code is None:
                 log_output.insert(tk.END, f"Error: No se pudo leer el CUIT de la página {page_num + 1}\n")
                 log_output.see(tk.END)
@@ -93,22 +93,18 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             if current_cuit_code is not None and cuit_code != current_cuit_code:
                 # Agregar la firma a la última página del bloque antes de guardar
                 pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-                save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output, all_text, start_page_num)
+                save_pdf_block(pages_buffer, current_output_folder, log_output, all_text, start_page_num)
                 pages_buffer = []
                 start_page_num = page_num
 
+            if current_cuit_code != cuit_code:
+                nro_guia = read_nro_guia(all_text, page_num)
                 
+            current_cuit_code = cuit_code
+            
             # Carpeta de salida para este CUIT
             p_directory = "\\\\10.55.55.9\\particulares"
-            cuit_folder = os.path.join(p_directory, cuit_code)
-            
-            if not os.path.exists(cuit_folder):
-                os.makedirs(cuit_folder, exist_ok=True)
-                log_output.insert(tk.END, f"Creando carpeta {cuit_folder}\n")
-            else:
-                log_output.insert(tk.END, f"La carpeta {cuit_folder} ya existe\n")
 
-            current_cuit_code = cuit_code
             current_output_folder = os.path.join(p_directory, current_cuit_code)
             os.makedirs(current_output_folder, exist_ok=True)
             
@@ -116,17 +112,17 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
         # Guardar el último bloque al finalizar el bucle
         if pages_buffer:
-            save_pdf_block(current_writer, pages_buffer, current_output_folder, log_output, all_text, total_pages - len(pages_buffer))
+            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
+            save_pdf_block(pages_buffer, current_output_folder, log_output, nro_guia)
 
         log_output.insert(tk.END, f"Procesamiento finalizado\n")
         log_output.see(tk.END)
         mover_pdf_a_procesados(pdf_file_path, log_output)
 
-    except PermissionError as e:
+    except Exception as e:
         log_output.insert(tk.END, f"Error: No se pudo acceder al archivo {pdf_file_path} debido a permisos. {e}\n")
         log_output.see(tk.END)
         time.sleep(2)  # Espera antes de intentar de nuevo
-        split_pdf_add_img(pdf_file_path, image_path, log_output)  # Intentar nuevamente
 
 
 def add_signature_to_page(page, image_path, img):
@@ -154,34 +150,29 @@ def add_signature_to_page(page, image_path, img):
     return page
 
 
-def save_pdf_block(writer, pages_buffer, output_folder, log_output, all_text, start_page_num):    
-
-    for page_num, page in enumerate(pages_buffer):
-        writer = PdfWriter()
-        page_index = start_page_num + page_num
+def save_pdf_block(pages_buffer, output_folder, log_output, nro_guia):    
+    writer = PdfWriter()
+    for page in pages_buffer:
+        writer.add_page(page)
         
-        # Guardar el bloque de páginas con el CUIT actual
-        nombre_archivo = read_nro_guia(all_text, page_index)
-        if not nombre_archivo:
-            nombre_archivo = f"Pagina_{page_index + 1}"
-        output_pdf_path = os.path.join(output_folder, f"{nombre_archivo}.pdf")
-        
-        # Verificar que la ruta del archivo sea válida
-        if not os.path.isdir(output_folder):
-            log_output.insert(tk.END, f"Error: El directorio de salida no existe: {output_folder}\n")
-            log_output.see(tk.END)
-            return
-        
-        try:
-            writer.add_page(page)
+    output_pdf_path = os.path.join(output_folder, f"{nro_guia}.pdf")
 
-            with open(output_pdf_path, "wb") as output_pdf:
-                writer.write(output_pdf)
+    # Verificar que la ruta del archivo sea válida
+    if not os.path.isdir(output_folder):
+        log_output.insert(tk.END, f"Error: El directorio de salida no existe: {output_folder}\n")
+        log_output.see(tk.END)
+        return
 
-            log_output.insert(tk.END, f"Páginas procesada y guardadas en {output_pdf_path}\n")
-        except OSError as e:
-            log_output.insert(tk.END, f"Error al guardar el archivo {output_pdf_path}: {e}\n")    
-            log_output.see(tk.END)
+    try:
+        with open(output_pdf_path, "wb") as output_pdf:
+            writer.write(output_pdf)
+            
+        log_output.insert(tk.END, f"Páginas procesada y guardadas en {output_pdf_path}\n")
+        
+    except OSError as e:
+        log_output.insert(tk.END, f"Error al guardar el archivo {output_pdf_path}: {e}\n")    
+        
+    log_output.see(tk.END)
 
 
 def mover_pdf_a_procesados(pdf_file_path, log_output):
