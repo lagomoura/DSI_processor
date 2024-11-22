@@ -93,7 +93,7 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             if current_cuit_code is not None and cuit_code != current_cuit_code:
                 # Agregar la firma a la última página del bloque antes de guardar
                 pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-                save_pdf_block(pages_buffer, current_output_folder, log_output, all_text, start_page_num)
+                save_pdf_block(pages_buffer, current_output_folder, log_output, nro_guia)
                 pages_buffer = []
                 start_page_num = page_num
 
