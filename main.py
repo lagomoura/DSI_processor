@@ -51,79 +51,18 @@ def extract_cuit_pdf(page):
 def read_nro_guia(all_text, page_number):
     text = all_text[page_number].split("\n")
     if text:
+        line = text[10].strip()
         doc_transp = text[10].split()[0]
+        remaining_text_on_line = line[len(doc_transp):].strip()
+        
+        if remaining_text_on_line and remaining_text_on_line[0].isdigit():
+            doc_transp += remaining_text_on_line[0]
+            print(f"Doc_transp: {doc_transp}")
+            print(f"Remaining text: {remaining_text_on_line}")
         return doc_transp
     else:
         print("Error leyendo doc_transpot", text)
         return None
-
-def split_pdf_add_img(pdf_file_path, image_path, log_output):
-    try:
-        time.sleep(1)
-        reader = PdfReader(pdf_file_path)
-
-        # Leer la firma
-        img = Image.open(image_path)
-
-        # Variables para el proceso de agrupacion de paginas por CUIT
-        current_cuit_code = None
-        pages_buffer = []
-        start_page_num = 0
-        nro_guia = None
-        
-        all_text = extract_text_from_all_pages(pdf_file_path)
-        
-        # Ignorando la ultima hoja (resumen de DSI)
-        total_pages = len(reader.pages) - 1
-        
-        for page_num in range(total_pages):
-            page = reader.pages[page_num]
-            cuit_code = extract_cuit_pdf(page)
-            
-            # Si no se encuentra CUIT, se asume que pertenece al CUIT anterior
-            if cuit_code is None and current_cuit_code is not None:
-                cuit_code = current_cuit_code
-                
-            if cuit_code is None:
-                log_output.insert(tk.END, f"Error: No se pudo leer el CUIT de la página {page_num + 1}\n")
-                log_output.see(tk.END)
-                continue
-
-        # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
-            if current_cuit_code is not None and cuit_code != current_cuit_code:
-                # Agregar la firma a la última página del bloque antes de guardar
-                pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-                save_pdf_block(pages_buffer, current_output_folder, log_output, nro_guia)
-                pages_buffer = []
-                start_page_num = page_num
-
-            if current_cuit_code != cuit_code:
-                nro_guia = read_nro_guia(all_text, page_num)
-                
-            current_cuit_code = cuit_code
-            
-            # Carpeta de salida para este CUIT
-            p_directory = "\\\\10.55.55.9\\particulares"
-
-            current_output_folder = os.path.join(p_directory, current_cuit_code)
-            os.makedirs(current_output_folder, exist_ok=True)
-            
-            pages_buffer.append(page)
-
-        # Guardar el último bloque al finalizar el bucle
-        if pages_buffer:
-            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-            save_pdf_block(pages_buffer, current_output_folder, log_output, nro_guia)
-
-        log_output.insert(tk.END, f"Procesamiento finalizado\n")
-        log_output.see(tk.END)
-        mover_pdf_a_procesados(pdf_file_path, log_output)
-
-    except Exception as e:
-        log_output.insert(tk.END, f"Error: No se pudo acceder al archivo {pdf_file_path} debido a permisos. {e}\n")
-        log_output.see(tk.END)
-        time.sleep(2)  # Espera antes de intentar de nuevo
-
 
 def add_signature_to_page(page, image_path, img):
     # Crear un archivo en blanco con las mismas configuraciones de la página original
@@ -149,7 +88,72 @@ def add_signature_to_page(page, image_path, img):
 
     return page
 
+def split_pdf_add_img(pdf_file_path, image_path, log_output):
+    try:
+        time.sleep(1)
+        reader = PdfReader(pdf_file_path)
 
+        # Leer la firma
+        img = Image.open(image_path)
+
+        # Variables para el proceso de agrupacion de paginas por CUIT
+        current_cuit_code = None
+        pages_buffer = []
+        start_page_num = 0
+        current_doc_transp = None
+        
+        all_text = extract_text_from_all_pages(pdf_file_path)
+        
+        # Ignorando la ultima hoja (resumen de DSI)
+        total_pages = len(reader.pages) - 1
+        
+        for page_num in range(total_pages):
+            page = reader.pages[page_num]
+            cuit_code = extract_cuit_pdf(page)
+            nro_guia = read_nro_guia(all_text, page_num)
+            
+            # Si no se encuentra CUIT, se asume que pertenece al CUIT anterior
+            if cuit_code is None and current_cuit_code is not None:
+                cuit_code = current_cuit_code
+                
+            if cuit_code is None or nro_guia is None:
+                log_output.insert(tk.END, f"Error: No se pudo leer el CUIT de la página {page_num + 1}\n")
+                log_output.see(tk.END)
+                continue
+
+        # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
+            if current_cuit_code is not None and (cuit_code != current_cuit_code or nro_guia != current_doc_transp):
+                # Agregar la firma a la última página del bloque antes de guardar
+                pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
+                save_pdf_block(pages_buffer, current_output_folder, log_output, current_doc_transp)
+                pages_buffer = []
+                start_page_num = page_num
+            
+            current_cuit_code = cuit_code
+            current_doc_transp = nro_guia
+            
+            # Carpeta de salida para este CUIT
+            p_directory = "\\\\10.55.55.9\\particulares"
+
+            current_output_folder = os.path.join(p_directory, current_cuit_code)
+            os.makedirs(current_output_folder, exist_ok=True)
+            
+            pages_buffer.append(page)
+
+        # Guardar el último bloque al finalizar el bucle
+        if pages_buffer:
+            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
+            save_pdf_block(pages_buffer, current_output_folder, log_output, current_doc_transp)
+
+        log_output.insert(tk.END, f"Procesamiento finalizado\n")
+        log_output.see(tk.END)
+        mover_pdf_a_procesados(pdf_file_path, log_output)
+
+    except Exception as e:
+        log_output.insert(tk.END, f"Error: No se pudo acceder al archivo {pdf_file_path} debido a permisos. {e}\n")
+        log_output.see(tk.END)
+        time.sleep(2)  # Espera antes de intentar de nuevo
+        
 def save_pdf_block(pages_buffer, output_folder, log_output, nro_guia):    
     writer = PdfWriter()
     for page in pages_buffer:
