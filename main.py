@@ -15,6 +15,16 @@ import shutil
 import sys
 from pathlib import Path
 
+def ensure_output_directory(base_path, cuit_code, log_output):
+    directory = os.path.join(base_path, cuit_code)
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as e:
+        log_output.insert(tk.END, f"Error al crear el directorio {directory}: {e}\n")
+        log_output.see(tk.END)
+        return None
+    return directory
+
 if getattr(sys, 'frozen', False):
     # El archivo está empaquetado con PyInstaller
     base_directory = os.path.dirname(sys.executable)
@@ -26,42 +36,47 @@ else:
 WATCH_DIRECTORY = os.path.join(base_directory, "input_pdf")
 SIGNATURE_IMAGE = os.path.join(base_directory, "signature", "firma.JPEG")
 
-if not os.path.exists(WATCH_DIRECTORY):
-    print(f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.")
-# Finaliza el programa si la carpeta no existe
-
 def extract_text_from_all_pages(pdf_file_path):
     reader = PdfReader(pdf_file_path)
     all_text = [page.extract_text() for page in reader.pages]
     return all_text
 
 def extract_cuit_pdf(page):
-    # Leer el PDF
-    text = page.extract_text()
-    match = re.search(r'CUIT\s*-\s*(\d+\s*\d*)', text)
-
-    if match:
-        cuit = match.group(1)
-        cuit_clean = cuit.replace(" ", "")
-
-        return f"{cuit_clean}"
-    else:
+    try:
+        # Leer el PDF
+        text = page.extract_text()
+        if not text:
+            print(f"Advertencia: Texto vacío en la página. No se puede extraer CUIT.")
+            return None
+        
+        match = re.search(r'CUIT\s*-\s*(\d+\s*\d*)', text)
+        if match:
+            cuit = match.group(1).replace(" ", "")
+            return cuit
+        return None
+    except Exception as e:
+        print(f"Error: No se pudo extraer CUIT de la página. {e}")
         return None
 
 def read_nro_guia(all_text, page_number):
-    text = all_text[page_number].split("\n")
-    if text:
-        line = text[10].strip()
-        doc_transp = text[10].split()[0]
-        remaining_text_on_line = line[len(doc_transp):].strip()
-        
-        if remaining_text_on_line and remaining_text_on_line[0].isdigit():
-            doc_transp += remaining_text_on_line[0]
-            print(f"Doc_transp: {doc_transp}")
-            print(f"Remaining text: {remaining_text_on_line}")
-        return doc_transp
-    else:
-        print("Error leyendo doc_transpot", text)
+    try:
+        text = all_text[page_number].split("\n")
+        if len(text) >= 10:
+            line = text[10].strip()
+            doc_transp = text[10].split()[0]
+            remaining_text_on_line = line[len(doc_transp):].strip()
+            
+            if remaining_text_on_line and remaining_text_on_line[0].isdigit():
+                doc_transp += remaining_text_on_line[0]
+                print(f"Doc_transp: {doc_transp}")
+                print(f"Remaining text: {remaining_text_on_line}")
+                print(f"Nro_guia: {doc_transp}")
+            return doc_transp
+        else:
+            print(f"Advertencia: La página {page_number + 1} no tiene suficientes líneas para extraer nro_guia.")
+            return None
+    except Exception as e:
+        print(f"Error: No se pudo extraer nro_guia de la página {page_number + 1}. {e}")
         return None
 
 def add_signature_to_page(page, image_path, img):
@@ -98,10 +113,9 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
 
         # Variables para el proceso de agrupacion de paginas por CUIT
         current_cuit_code = None
+        current_nro_guia = None
+        first_nro_guia = None
         pages_buffer = []
-        start_page_num = 0
-        current_doc_transp = None
-        
         all_text = extract_text_from_all_pages(pdf_file_path)
         
         # Ignorando la ultima hoja (resumen de DSI)
@@ -112,38 +126,35 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             cuit_code = extract_cuit_pdf(page)
             nro_guia = read_nro_guia(all_text, page_num)
             
-            # Si no se encuentra CUIT, se asume que pertenece al CUIT anterior
-            if cuit_code is None and current_cuit_code is not None:
+            # Validar CUIT
+            if not cuit_code:
+                log_output.insert(tk.END, f"Error: CUIT no válido para la página {page_num + 1}. Se omitirá esta página.\n")
                 cuit_code = current_cuit_code
+            
+            if not nro_guia:
+                log_output.insert(tk.END, f"Error: nro_guia no válido para la página {page_num + 1}. Se omitirá esta página.\n")
+                nro_guia = current_nro_guia
                 
-            if cuit_code is None or nro_guia is None:
-                log_output.insert(tk.END, f"Error: No se pudo leer el CUIT de la página {page_num + 1}\n")
-                log_output.see(tk.END)
-                continue
-
-        # Si encontramos un nuevo CUIT, guardamos el bloque actual (si existe)
-            if current_cuit_code is not None and (cuit_code != current_cuit_code or nro_guia != current_doc_transp):
-                # Agregar la firma a la última página del bloque antes de guardar
-                pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-                save_pdf_block(pages_buffer, current_output_folder, log_output, current_doc_transp)
-                pages_buffer = []
-                start_page_num = page_num
+            if first_nro_guia is None:
+                first_nro_guia = nro_guia
             
             current_cuit_code = cuit_code
-            current_doc_transp = nro_guia
+            current_nro_guia = nro_guia
+
+            pages_buffer.append(page)
+            log_output.insert(tk.END, f"Página {page_num + 1} agregada al bloque.\n")
+            log_output.see(tk.END)
+        
+        if pages_buffer:
+            log_output.insert(tk.END, f"Guardando bloque: CUIT={current_cuit_code}, nro_guia={nro_guia}\n")
+            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
             
             # Carpeta de salida para este CUIT
-            p_directory = "\\\\10.55.55.9\\particulares"
+            p_directory = "\\\\10.55.55.9\\particulares\\test"
+            current_output_folder = ensure_output_directory(p_directory, current_cuit_code, log_output)
 
-            current_output_folder = os.path.join(p_directory, current_cuit_code)
-            os.makedirs(current_output_folder, exist_ok=True)
-            
-            pages_buffer.append(page)
-
-        # Guardar el último bloque al finalizar el bucle
-        if pages_buffer:
-            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
-            save_pdf_block(pages_buffer, current_output_folder, log_output, current_doc_transp)
+            if current_output_folder:
+                save_pdf_block(pages_buffer, current_output_folder, log_output, first_nro_guia)
 
         log_output.insert(tk.END, f"Procesamiento finalizado\n")
         log_output.see(tk.END)
@@ -158,7 +169,7 @@ def save_pdf_block(pages_buffer, output_folder, log_output, nro_guia):
     writer = PdfWriter()
     for page in pages_buffer:
         writer.add_page(page)
-        
+
     output_pdf_path = os.path.join(output_folder, f"{nro_guia}.pdf")
 
     # Verificar que la ruta del archivo sea válida
@@ -172,7 +183,7 @@ def save_pdf_block(pages_buffer, output_folder, log_output, nro_guia):
             writer.write(output_pdf)
             
         log_output.insert(tk.END, f"Páginas procesada y guardadas en {output_pdf_path}\n")
-        
+
     except OSError as e:
         log_output.insert(tk.END, f"Error al guardar el archivo {output_pdf_path}: {e}\n")    
         
@@ -180,7 +191,6 @@ def save_pdf_block(pages_buffer, output_folder, log_output, nro_guia):
 
 
 def mover_pdf_a_procesados(pdf_file_path, log_output):
-
     processed_folder = os.path.join(base_directory, "PROCESADOS")
 
     if not os.path.exists(processed_folder):
@@ -191,28 +201,11 @@ def mover_pdf_a_procesados(pdf_file_path, log_output):
     destino_pdf = os.path.join(
         processed_folder, os.path.basename(pdf_file_path))
     shutil.move(pdf_file_path, destino_pdf)
-    log_output.insert(
-        tk.END, f"Archivo original movido desde carpeta input_pdf a carpeta PROCESADOS\n")
+    log_output.insert(tk.END, f"Archivo original movido desde carpeta input_pdf a carpeta PROCESADOS\n")
     log_output.insert(tk.END, f"Rutina de procesamiento finalizada!\n")
 
 
-class PDFHandler(FileSystemEventHandler):
-    def __init__(self, log_output):
-        self.log_output = log_output
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-
-        if event.src_path.endswith(".pdf"):
-            self.log_output.insert(
-                tk.END, f"Nuevo archivo PDF detectado: {event.src_path}\n")
-            self.log_output.see(tk.END)
-            split_pdf_add_img(event.src_path, SIGNATURE_IMAGE, self.log_output)
-
-
 def start_observer(log_output):
-
     if not os.path.exists(WATCH_DIRECTORY):
         log_output.insert(tk.END, f"Error: El directorio {WATCH_DIRECTORY} no existe o no es accesible.\n")
         log_output.see(tk.END)
@@ -241,7 +234,6 @@ def start_observer(log_output):
 
     observer.join()
 
-
 def start_gui():
     root = tk.Tk()
     root.title("Monitor de PDFs")
@@ -258,6 +250,19 @@ def start_gui():
 
     root.mainloop()
 
+class PDFHandler(FileSystemEventHandler):
+    def __init__(self, log_output):
+        self.log_output = log_output
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+
+        if event.src_path.endswith(".pdf"):
+            self.log_output.insert(
+                tk.END, f"Nuevo archivo PDF detectado: {event.src_path}\n")
+            self.log_output.see(tk.END)
+            split_pdf_add_img(event.src_path, SIGNATURE_IMAGE, self.log_output)
 
 # Iniciar la interfaz gráfica
 if __name__ == "__main__":
