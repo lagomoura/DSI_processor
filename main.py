@@ -114,7 +114,6 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
         # Variables para el proceso de agrupacion de paginas por CUIT
         current_cuit_code = None
         current_nro_guia = None
-        first_nro_guia = None
         pages_buffer = []
         all_text = extract_text_from_all_pages(pdf_file_path)
         
@@ -126,6 +125,10 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             cuit_code = extract_cuit_pdf(page)
             nro_guia = read_nro_guia(all_text, page_num)
             
+            if nro_guia and (not re.match(r'^(AF\d+|CI\d+|\d+)$', nro_guia) or len(nro_guia) < 5):
+                log_output.insert(tk.END, f"Advertencia: nro_guia con formato inválido en la página {page_num + 1}. Usando nro_guia del bloque actual.\n")
+                nro_guia = current_nro_guia
+            
             # Validar CUIT
             if not cuit_code:
                 log_output.insert(tk.END, f"Error: CUIT no válido para la página {page_num + 1}. Se omitirá esta página.\n")
@@ -134,9 +137,19 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             if not nro_guia:
                 log_output.insert(tk.END, f"Error: nro_guia no válido para la página {page_num + 1}. Se omitirá esta página.\n")
                 nro_guia = current_nro_guia
+            
+            if pages_buffer and nro_guia != current_nro_guia:
+                log_output.insert(tk.END, f"Guardando bloque: CUIT={current_cuit_code}, nro_guia={nro_guia}\n")
+                pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
                 
-            if first_nro_guia is None:
-                first_nro_guia = nro_guia
+                # Carpeta de salida para este CUIT
+                p_directory = "\\\\10.55.55.9\\particulares"
+                current_output_folder = ensure_output_directory(p_directory, current_cuit_code, log_output)
+                
+                if current_output_folder:
+                    save_pdf_block(pages_buffer, current_output_folder, log_output, current_nro_guia)
+                    
+                pages_buffer = []
             
             current_cuit_code = cuit_code
             current_nro_guia = nro_guia
@@ -144,18 +157,18 @@ def split_pdf_add_img(pdf_file_path, image_path, log_output):
             pages_buffer.append(page)
             log_output.insert(tk.END, f"Página {page_num + 1} agregada al bloque.\n")
             log_output.see(tk.END)
-        
-        if pages_buffer:
-            log_output.insert(tk.END, f"Guardando bloque: CUIT={current_cuit_code}, nro_guia={nro_guia}\n")
-            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
             
+        if pages_buffer:
+            log_output.insert(tk.END, f"Guardando el último bloque: CUIT={current_cuit_code}, nro_guia={current_nro_guia}\n")
+            pages_buffer[-1] = add_signature_to_page(pages_buffer[-1], image_path, img)
+
             # Carpeta de salida para este CUIT
-            p_directory = "\\\\10.55.55.9\\particulares\\test"
+            p_directory = "\\\\10.55.55.9\\particulares"
             current_output_folder = ensure_output_directory(p_directory, current_cuit_code, log_output)
-
+            
             if current_output_folder:
-                save_pdf_block(pages_buffer, current_output_folder, log_output, first_nro_guia)
-
+                save_pdf_block(pages_buffer, current_output_folder, log_output, current_nro_guia)
+        
         log_output.insert(tk.END, f"Procesamiento finalizado\n")
         log_output.see(tk.END)
         mover_pdf_a_procesados(pdf_file_path, log_output)
