@@ -49,9 +49,9 @@ def extract_cuit_pdf(page):
             print(f"Advertencia: Texto vacío en la página. No se puede extraer CUIT.")
             return None
         
-        match = re.search(r'CUIT\s*-\s*(\d+\s*\d*)', text)
+        match = re.search(r'(CUIT|CUIL)\s*-\s*(\d+\s*\d*)', text)
         if match:
-            cuit = match.group(1).replace(" ", "")
+            cuit = match.group(2).replace(" ", "")
             return cuit
         return None
     except Exception as e:
